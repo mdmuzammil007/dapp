@@ -1,14 +1,28 @@
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
 import atm_abi from "../artifacts/contracts/Assessment.sol/Assessment.json";
+import QRCode from "qrcode.react";
 
-export default function HomePage() {
+const HomePage = () => {
   const [ethWallet, setEthWallet] = useState(undefined);
   const [account, setAccount] = useState(undefined);
   const [atm, setATM] = useState(undefined);
-  const [balance, setBalance] = useState(undefined);
-  const [password, setPassword] = useState("abcd"); // Set initial password to "abcd"
+  const [withdrawAmount, setWithdrawAmount] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [accountClosed, setAccountClosed] = useState(false);
+  const [ownerDetails, setOwnerDetails] = useState({
+    name: " Muzzamil",
+    education: "Bachelor's Degree",
+    accountOpenedDate: "3rd April 2015",
+    loans: [],
+    panNumber: "GHRB3857HN",
+    swiftCode: "ABCD1234",
+    customerId: "123456789",
+    crn: "987654321"
+  });
   const [transactionStatus, setTransactionStatus] = useState("");
+  const [balance, setBalance] = useState(undefined);
+  const [showQRCode, setShowQRCode] = useState(false);
 
   const contractAddress = "0x5FbDB2315678afecb367f032d93F642f64180aa3";
   const atmABI = atm_abi.abi;
@@ -19,15 +33,16 @@ export default function HomePage() {
     }
 
     if (ethWallet) {
-      const account = await ethWallet.request({ method: "eth_accounts" });
-      handleAccount(account);
+      const accounts = await ethWallet.request({ method: "eth_accounts" });
+      handleAccount(accounts);
     }
   };
 
-  const handleAccount = (account) => {
-    if (account) {
-      console.log("Account connected: ", account);
-      setAccount(account);
+  const handleAccount = (accounts) => {
+    if (accounts.length > 0) {
+      console.log("Account connected: ", accounts[0]);
+      setAccount(accounts[0]);
+      setAccountClosed(false);
     } else {
       console.log("No account found");
     }
@@ -42,7 +57,7 @@ export default function HomePage() {
     const accounts = await ethWallet.request({ method: "eth_requestAccounts" });
     handleAccount(accounts);
 
-    // once wallet is set we can get a reference to our deployed contract
+    // once the wallet is set, we can get a reference to our deployed contract
     getATMContract();
   };
 
@@ -56,91 +71,160 @@ export default function HomePage() {
 
   const getBalance = async () => {
     if (atm) {
-      setBalance((await atm.getBalance()).toNumber());
-    }
-  };
-
-  const deposit = async () => {
-    if (atm) {
       try {
-        setTransactionStatus("Transaction in progress...");
-        const tx = await atm.deposit(1, { value: ethers.utils.parseEther("0.1") });
-        await tx.wait();
-        setTransactionStatus("Transaction successful! Transaction fee: 0.1 ETH");
-        getBalance();
+        const fetchedBalance = await atm.fetchBalance();
+        const formattedBalance = ethers.utils.formatUnits(fetchedBalance, 18);
+
+        // Convert the formattedBalance to a number and limit the decimal places to 2
+        const roundedBalance = Number(parseFloat(formattedBalance).toFixed(2));
+        
+        setBalance(roundedBalance);
+        setTransactionStatus(`Your account balance is ${roundedBalance} ETH.`);
       } catch (error) {
-        console.error(error);
-        setTransactionStatus("Transaction failed");
+        setTransactionStatus(`Error fetching balance: ${error.message}`);
       }
     }
   };
 
+  const deposit = async () => {
+    if (atm && depositAmount !== "") {
+      try {
+        let tx = await atm.deposit(ethers.utils.parseUnits(depositAmount, 18));
+        setTransactionStatus("Deposit Successful");
+        await tx.wait();
+        setDepositAmount("");
+        getBalance(); // Fetch balance after deposit
+      } catch (error) {
+        setTransactionStatus(`Deposit Failed: ${error.message}`);
+      }
+    } else {
+      setTransactionStatus("Please enter a valid deposit amount");
+    }
+  };
+
   const withdraw = async () => {
+    if (atm && withdrawAmount !== "") {
+      try {
+        let tx = await atm.withdraw(ethers.utils.parseUnits(withdrawAmount, 18));
+        setTransactionStatus("Withdrawal Successful");
+        await tx.wait();
+        setWithdrawAmount("");
+        getBalance(); // Fetch balance after withdrawal
+      } catch (error) {
+        setTransactionStatus(`Withdrawal Failed: ${error.message}`);
+      }
+    } else {
+      setTransactionStatus("Please enter a valid withdrawal amount");
+    }
+  };
+
+  const closeAccount = async () => {
     if (atm) {
       try {
-        setTransactionStatus("Transaction in progress...");
-        const tx = await atm.withdraw(1, { gasPrice: ethers.utils.parseEther("0.1") });
+        let tx = await atm.closeAccount();
+        setTransactionStatus("Account Closed");
         await tx.wait();
-        setTransactionStatus("Transaction successful! Transaction fee: 0.1 ETH");
-        getBalance();
+        setAccountClosed(true);
+        setBalance(undefined);
       } catch (error) {
-        console.error(error);
-        setTransactionStatus("Transaction failed");
+        setTransactionStatus(`Close Account Failed: ${error.message}`);
+      }
+    }
+  };
+
+  const reopenAccount = async () => {
+    if (atm) {
+      try {
+        if (!accountClosed) {
+          throw new Error("Close account to reopen");
+        }
+
+        let tx = await atm.reopenAccount();
+        setTransactionStatus("Account Reopened");
+        await tx.wait();
+        setAccountClosed(false);
+        setBalance(undefined);
+      } catch (error) {
+        setTransactionStatus(`Reopen Account Failed: ${error.message}`);
       }
     }
   };
 
   const initUser = () => {
-    // Check to see if user has Metamask
     if (!ethWallet) {
-      return <p>Please install Metamask in order to use this ATM.</p>;
+      return <p>Please install Metamask to use this ATM.</p>;
     }
 
-    // Check to see if user is connected. If not, connect to their account
     if (!account) {
-      return <button onClick={connectAccount}>Please connect your Metamask wallet</button>;
+      return (
+        <button onClick={connectAccount}>
+          Please connect your Metamask wallet
+        </button>
+      );
     }
 
-    if (balance === undefined) {
-      getBalance();
+    if (accountClosed) {
+      return (
+        <div>
+          <p>Your Account: {account}</p>
+          <p>Account closed: Reopen account to operate</p>
+          <button onClick={reopenAccount} style={{ backgroundColor: "lightgreen" }}>
+            Reopen Account
+          </button>
+        </div>
+      );
     }
-
-    const clearPassword = () => {
-      setPassword("");
-    };
 
     return (
-      <div>
+      <div style={{ backgroundColor: "darkgrey" }}>
         <p>Your Account: {account}</p>
-        <p>Your Balance: {balance}</p>
-        <button onClick={deposit}>Deposit 1 ETH</button>
-        <button onClick={withdraw}>Withdraw 1 ETH</button>
-        <div>
+        <label>
+          Balance (ETH):
           <input
-            type="password"
-            placeholder="Enter password"
-            value={password}
-            readOnly // Make the input read-only
+            type="number"
+            value={balance}
+            onChange={(e) => setBalance(e.target.value)}
           />
-          <button onClick={clearPassword}>Clear Password</button> {/* Add clear password button */}
-          <div className="keyboard">
-            {/* Digital keyboard buttons */}
-            {[...Array(10).keys()].map((num) => (
-              <button key={num} onClick={() => setPassword((prev) => prev + num)}>
-                {num}
-              </button>
-            ))}
-            {["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M"].map((char) => (
-              <button key={char} onClick={() => setPassword((prev) => prev + char)}>
-                {char}
-              </button>
-            ))}
-            <button onClick={() => setPassword((prev) => prev.slice(0, -1))}>
-              {"<-"}
-            </button>
+        </label>
+        <br />
+        <label>
+          Deposit Amount (ETH):
+          <input
+            type="number"
+            value={depositAmount}
+            onChange={(e) => setDepositAmount(e.target.value)}
+          />
+        </label>
+        <button onClick={deposit} style={{ backgroundColor: "lightgreen" }}>
+          Deposit
+        </button>
+        <br />
+        <label>
+          Withdraw Amount (ETH):
+          <input
+            type="number"
+            value={withdrawAmount}
+            onChange={(e) => setWithdrawAmount(e.target.value)}
+          />
+        </label>
+        <button onClick={withdraw} style={{ backgroundColor: "lightgreen" }}>
+          Withdraw
+        </button>
+        <button onClick={() => {getBalance(); setShowQRCode(true);}}>
+          Scan this code to view passbook
+        </button>
+        {showQRCode && (
+          <div>
+            <p>Scan this code to view passbook:</p>
+            <QRCode value={JSON.stringify(ownerDetails)} />
+            <p>Customer ID: {ownerDetails.customerId}</p>
           </div>
-        </div>
-        <div className="transaction-status">{transactionStatus}</div>
+        )}
+        <br />
+        <button onClick={closeAccount} style={{ backgroundColor: "darkgrey" }}>
+          Close Account
+        </button>
+        {transactionStatus && <p>{transactionStatus}</p>}
       </div>
     );
   };
@@ -150,29 +234,33 @@ export default function HomePage() {
   }, []);
 
   return (
-    <main className="container">
+    <main className="container" style={{ backgroundColor: "darkgrey" }}>
       <header>
-        <h1>Welcome to the Metacrafters ATM!</h1>
+        <h1>Welcome to Smart ATM</h1>
       </header>
       {initUser()}
       <style jsx>{`
         .container {
           text-align: center;
-          background-color: purple; /* Purple background */
-          color: white; /* Text color */
+          padding: 20px;
+          border-radius: 10px;
+          margin-top: 20px;
         }
-        .keyboard {
-          margin-top: 10px;
-        }
-        .keyboard button {
+
+        label {
           margin: 5px;
-          padding: 5px 10px;
-          cursor: pointer;
         }
-        .transaction-status {
-          margin-top: 10px;
+
+        input {
+          margin-left: 5px;
+        }
+
+        button {
+          margin: 5px;
         }
       `}</style>
     </main>
   );
-}
+};
+
+export default HomePage;
