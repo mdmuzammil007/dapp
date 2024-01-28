@@ -4,25 +4,32 @@ pragma solidity ^0.8.9;
 contract Assessment {
     address payable public owner;
     uint256 public balance;
+    bool public accountClosed;
+    string public accountDetails; // Store account details as a string
 
     event Deposit(uint256 amount);
     event Withdraw(uint256 amount);
-    event TaxPaid(uint256 amount);
+    event AccountClosed(bool closed);
+    event AccountReopened(bool reopened);
 
-    constructor(uint256 initBalance) payable {
+    constructor(uint initBalance) payable {
         owner = payable(msg.sender);
         balance = initBalance;
+        accountClosed = false;
     }
 
-    function getBalance() public view returns (uint256) {
+    function getBalance() public view returns(uint256) {
         return balance;
     }
 
-    function deposit(uint256 _amount) public payable {
-        uint256 _previousBalance = balance;
-
-        // make sure this is the owner
+    modifier onlyOwner() {
         require(msg.sender == owner, "You are not the owner of this account");
+        _;
+    }
+
+    function deposit(uint256 _amount) public payable onlyOwner {
+        require(!accountClosed, "Account is closed");
+        uint _previousBalance = balance;
 
         // perform transaction
         balance += _amount;
@@ -37,9 +44,9 @@ contract Assessment {
     // custom error
     error InsufficientBalance(uint256 balance, uint256 withdrawAmount);
 
-    function withdraw(uint256 _withdrawAmount) public {
-        require(msg.sender == owner, "You are not the owner of this account");
-        uint256 _previousBalance = balance;
+    function withdraw(uint256 _withdrawAmount) public onlyOwner {
+        require(!accountClosed, "Account is closed");
+        uint _previousBalance = balance;
         if (balance < _withdrawAmount) {
             revert InsufficientBalance({
                 balance: balance,
@@ -57,33 +64,45 @@ contract Assessment {
         emit Withdraw(_withdrawAmount);
     }
 
-    function checkPassword(string memory _password) public pure returns (bool) {
-        return keccak256(abi.encodePacked(_password)) == keccak256(abi.encodePacked("abcd"));
+    function closeAccount() public onlyOwner {
+        accountClosed = true;
+        emit AccountClosed(true);
     }
 
-    // Function to calculate and pay taxes
-    function payTaxes() public {
-        // make sure this is the owner
-        require(msg.sender == owner, "You are not the owner of this account");
-
-        // calculate tax as 10% of the current balance
-        uint256 taxAmount = (balance * 10) / 100;
-
-        // subtract tax from the balance
-        balance -= taxAmount;
-
-        // emit the event
-        emit TaxPaid(taxAmount);
+    function reopenAccount() public onlyOwner {
+        accountClosed = false;
+        emit AccountReopened(true);
     }
 
-    // Function to get the tax amount without actually paying it
-    function getTaxAmount() public view returns (uint256) {
-        // calculate tax as 10% of the current balance
-        return (balance * 10) / 100;
+    function fetchBalance() public view returns (uint256) {
+        return balance;
     }
 
-    // Function for auditing purposes to retrieve relevant contract details
-    function auditContract() public view returns (address, uint256) {
-        return (owner, balance);
+    // Function to set account details and generate QR code
+    function setAccountDetails(
+        string memory _name,
+        string memory _education,
+        string memory _accountOpenedDate,
+        string memory _panNumber,
+        string memory _swiftCode,
+        string memory _customerId,
+        string memory _crn
+    ) public onlyOwner {
+        accountDetails = string(
+            abi.encodePacked(
+                "Name: ", _name, "\n",
+                "Education: ", _education, "\n",
+                "Account Opened Date: ", _accountOpenedDate, "\n",
+                "PAN Number: ", _panNumber, "\n",
+                "Swift Code: ", _swiftCode, "\n",
+                "Customer ID: ", _customerId, "\n",
+                "CRN: ", _crn
+            )
+        );
+    }
+
+    // Function to get the stored account details
+    function getAccountDetails() public view returns (string memory) {
+        return accountDetails;
     }
 }
